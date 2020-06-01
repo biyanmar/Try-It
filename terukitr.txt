@@ -1,0 +1,519 @@
+import React, { useState, useEffect } from 'react';
+import { connect } from 'react-redux';
+import {
+    getFormValues, stopSubmit, clearSubmitErrors, change,
+} from 'redux-form/immutable';
+import { createStructuredSelector } from 'reselect';
+import PropTypes from 'prop-types';
+import { navigate } from 'gatsby';
+import { merge } from 'lodash';
+import debounce from 'lodash/debounce';
+import { Map, List, fromJS } from 'immutable';
+
+import Seo from 'components/Seo';
+
+import { getEPSData, sendEPSData } from 'redux/eps/actions';
+import { makeSelectJwt, makeSelectUserData } from 'redux/app/selectors';
+import { makeSelectRequest, makeSelectEPSData } from 'redux/eps/selectors';
+
+import notif from 'utils/notifications';
+import moment from 'moment';
+import { EPS } from '../../utils/constants';
+import { searchFromOptions } from '../../utils/helper';
+import validate from './validation';
+
+import Template from './Template';
+import {
+    makeSelectEducation, makeSelectCountries, makeSelectOccupation, makeSelectAllowances,
+} from '../../redux/eps/selectors';
+
+import constants from './constants';
+
+const Eps = ({
+    allowances, countries, edu, occupations, request, location, eps, epsForm, keycloak, jwt, userData,
+    changeFormValueAction, clearSubmitErrorsAction, getEPSDataAction, sendEPSDataAction, setStopSubmitAction, ...props
+}) => {
+    const [isEdit, setIsEdit] = useState(true);
+    const [formInitialValues, setInitialValues] = useState(null);
+    const [formErrors, setFormErrors] = useState({});
+    const [sendMethod, setSendMethod] = useState(null);
+    const [uploadedFiles, setUploadedFiles] = useState([]);
+    const [educationList, setEducationList] = useState(edu);
+    const [occupationList, setOccupationList] = useState(occupations);
+    const [countryList, setCountryList] = useState(countries);
+    const [formTitle, setFormTitle] = useState('EPS Application');
+    const [previousScheme, setPreviousScheme] = useState(null);
+    const [salesLeads, setSalesLeads] = useState([]);
+    const [allowanceIdError, setAllowanceIdError] = useState(false);
+    const [totalRangeError, setTotalRangeError] = useState(false);
+    const [catWarmError, setCatWarmError] = useState(false);
+    const [catAcquantianceError, setCatAcquantianceError] = useState(false);
+
+    useEffect(() => {
+        getEPSDataAction();
+    }, []);
+
+    useEffect(() => {
+        if (Object.keys(formErrors).length) {
+            setStopSubmitAction(formErrors);
+        } else {
+            clearSubmitErrorsAction();
+        }
+    }, [formErrors]);
+
+    useEffect(() => {
+        if (!request.get('loading') && request.get('message')) {
+            if (request.get('error')) {
+                notif('error', request.get('message'));
+                if (eps.isEmpty()) {
+                    navigate(`/app/dashboard/${location.search}`, {
+                        replace: true,
+                    });
+                }
+            } else if (request.get('success')) {
+                if (sendMethod === 'submit') {
+                    navigate(`/app/dashboard/${location.search}`,
+                        { state: { notif: { type: 'success', message: request.get('message') } } });
+                } else if (sendMethod === 'draft') {
+                    notif('success', request.get('message'));
+                }
+            }
+        }
+    }, [request]);
+
+
+    useEffect(() => {
+        if (!request.get('loading') && request.get('success')) {
+            if (!eps.isEmpty() && request.get('success')) {
+                const init = {};
+                const status = eps.get('status');
+                const { STATUS } = EPS;
+
+                merge(init, {
+                    status,
+                    applicantName: eps.get('applicantName'),
+                    contactNumber: eps.get('contactNumber'),
+                    nric: eps.get('nric'),
+                    gender: eps.get('gender'),
+                    dob: eps.get('dob') ? moment(eps.get('dob')) : null,
+                    maritalStatus: eps.get('maritalStatus'),
+                    address: eps.get('address'),
+                    previousCompany: eps.get('previousCompany'),
+                    previousOccupationDescription: eps.get('previousOccupationDescription'),
+                    employmentIncome: eps.get('employmentIncome'),
+                    scheme: eps.get('scheme'),
+                    schemeCategory: eps.getIn(['scheme', 'category']) || eps.getIn(['scheme', 'name']),
+                    allowanceId: eps.getIn(['allowance', 'id']),
+                    rejectedAt: eps.get('rejectedAt'),
+                    comments: eps.get('comments'),
+                    rejectionNotes: eps.get('rejectionNotes'),
+                    isAuthorizeFSC: eps.get('isAuthorizeFSC') ? 'Yes' : 'No',
+                    totalRange: eps.getIn(['salesLeadsPotential', 'totalRange']),
+                    percentageAcquaintance: eps.getIn(['salesLeadsPotential', 'percentage', 'acquaintance']),
+                    percentageWarm: eps.getIn(['salesLeadsPotential', 'percentage', 'warm']),
+                    // warmDescription :   eps.get('acquaintanceDescription'),
+                    acquaintanceDescription:eps.getIn(['salesLeadsPotential', 'percentage', 'warm']),
+                });
+
+                const countryOfBirth = eps.get('countryOfBirth');
+                const previousOccupation = eps.get('previousOccupation');
+                const academicQualification = eps.get('academicQualification');
+                const supportingDocs = eps.get('supportingDocs');
+                const initialScheme = eps.get('initialScheme');
+                const salesLeadsTypes = eps.getIn(['salesLeadsPotential', 'types']) || [];
+
+
+
+
+                if (countryOfBirth) {
+                    merge(init, {
+                        countryOfBirth: countryOfBirth.get('name'),
+                    });
+                }
+
+                if (previousOccupation) {
+                    merge(init, {
+                        previousOccupation: previousOccupation.get('name'),
+                    });
+                }
+
+                if (academicQualification) {
+                    merge(init, {
+                        academicQualification: academicQualification.get('name'),
+                    });
+                }
+
+                if (supportingDocs) {
+                    setUploadedFiles(supportingDocs);
+                }
+
+                if (initialScheme) {
+                    setPreviousScheme(initialScheme);
+                }
+
+                if (salesLeadsTypes) {
+
+                    salesLeadsTypes.map((sl) => {
+                        const description = sl.category === 'warm' ? eps.get('warmDescription') : eps.get('acquaintanceDescription');
+                        const name = sl.name || sl.get('name');
+                        if (name === 'Others') {
+                            Object.assign(sl, {
+                                description,
+                            });
+                        }
+                        return sl;
+                    }),
+                        merge(init, {
+                            salesLeadsTypes,
+                        });
+                }
+
+                if (!userData.isEmpty()) {
+                    merge(init, {
+                        leaderName: userData.getIn(['agent', 'leaderName'], 'Leader unavailable'),
+                        agencyName: userData.getIn(['agent', 'agencyName'], 'Agency unavailable'),
+                    });
+                }
+
+                if (status && [STATUS.PAFU, STATUS.PAS, STATUS.DR].includes(status)) {
+                    setIsEdit(true);
+                    merge(init, { checkDeclaration: false });
+                    merge(init, { checkImportant: false });
+                } else {
+                    setIsEdit(false);
+                    merge(init, { checkDeclaration: true });
+                    merge(init, { checkImportant: true });
+                    setFormTitle('Submitted Application');
+                }
+                if (Object.keys(init).length) {
+                    setInitialValues(init);
+                }
+
+                setCountryList(countries);
+                setEducationList(edu);
+                setOccupationList(occupations);
+                setSalesLeads(salesLeadsTypes);
+                console.log(init)
+            }
+        }
+    }, [userData, eps, request.get('success')]);
+
+    const onSearchCountry = (value) => {
+        const result = searchFromOptions(countries, value);
+        setCountryList(result);
+    };
+
+    const onSearchEducation = (value) => {
+        const result = searchFromOptions(edu, value);
+        setEducationList(result);
+    };
+
+    const onSearchOccupation = (value) => {
+        const result = searchFromOptions(occupations, value);
+        setOccupationList(result);
+    };
+
+
+    useEffect(() => {
+        debounce(onSearchCountry);
+        debounce(onSearchEducation);
+        debounce(onSearchOccupation);
+    });
+
+    const isUploadValid = (file, field) => {
+        const { SUPPORTED_FILE_TYPES } = EPS;
+        const { errorMessages } = constants;
+        const errors = {};
+        const isValidFileType = SUPPORTED_FILE_TYPES.includes(file.type);
+        const isLt5M = file.size / 1024 / 1024 <= 5;
+
+        if (!isValidFileType) {
+            errors[field] = errorMessages.supportingDocs.fileType;
+        } else if (!isLt5M) {
+            errors[field] = errorMessages.supportingDocs.fileSize;
+        }
+
+        if (Object.keys(errors).length) {
+            setFormErrors(Object.assign({}, formErrors, errors));
+        }
+
+        return isValidFileType && isLt5M;
+    };
+
+    const onFileUploadSuccess = (info, type) => {
+        const { file } = info;
+        const { status } = file || '';
+
+        if (status === 'done') {
+            const { response: data } = file;
+            const filesToUpload = [...uploadedFiles];
+            const fileDetails = fromJS({
+                uid: file.uid,
+                id: data.data.id,
+                name: file.name,
+                description: '',
+                type,
+            });
+            filesToUpload.push(fileDetails);
+            setUploadedFiles(filesToUpload);
+        }
+    };
+
+    const onFileRemoved = (file) => {
+        const filesToUpload = [...uploadedFiles];
+        let index = filesToUpload.map(f => f.get('id')).indexOf(file.id);
+        if (index === -1) {
+            index = filesToUpload.map(f => f.get('uid')).indexOf(file.uid);
+        }
+        filesToUpload.splice(index, 1);
+        setUploadedFiles(filesToUpload);
+    };
+
+    const onSelectAllowance = (event) => {
+        const allowanceId = event.target.value || '';
+        changeFormValueAction('allowanceId', allowanceId);
+        setAllowanceIdError(false);
+    };
+
+    const onSelectLeads = (values, category) => {
+        const unselectedCatLeads = salesLeads.filter((sl) => {
+            const cat = sl.category || sl.get('category');
+            return cat !== category;
+        });
+        const types = values.map(val => ({
+            name: val,
+            category,
+            description: null,
+        }));
+        setSalesLeads(unselectedCatLeads.concat(types));
+
+        if (values.length) {
+            if (category === 'warm') {
+                setCatWarmError(false);
+            }
+            if (category === 'acquaintance') {
+                setCatAcquantianceError(false);
+            }
+        }
+    };
+
+    const onSelectRange = (event) => {
+        const range = event.target.value || '';
+        changeFormValueAction('totalRange', range);
+        setTotalRangeError(false);
+    };
+
+    const onLeadPercentageChange = (event) => {
+        const { name } = event.target || {};
+        const { value } = event.target || {};
+
+        if (name === 'percentageWarm') {
+            changeFormValueAction('percentageAcquaintance', parseInt(100 - value, 0));
+        } else {
+            changeFormValueAction('percentageWarm', parseInt(100 - value, 0));
+        }
+    };
+
+    const sendForm = (data, flag) => {
+        sendEPSDataAction(data, flag);
+    };
+
+    const onSalesLeadsPercentChange = (event) => {
+        const { value } = event.target || {};
+        const { name } = event.target || {};
+        if (parseInt(value, 0) > 100) {
+            event.preventDefault();
+        } else {
+            changeFormValueAction(name, value);
+        }
+    };
+    const mapDataToSubmit = (data) => {
+        const formData = {};
+        const { DOC_TYPES } = EPS;
+        const countryOfBirth = data.get('countryOfBirth');
+        const previousOccupation = data.get('previousOccupation');
+        const previousOccupationDescription = data.get('previousOccupationDescription');
+        const academicQualification = data.get('academicQualification');
+        const dob = moment(data.get('dob')).isValid() ? moment(data.get('dob')).format('MM-DD-YYYY') : null;
+        const isAuthorizeFSC = !!(data.get('isAuthorizeFSC') && data.get('isAuthorizeFSC') === 'Yes');
+        const country = countries.find(c => c.get('name') === countryOfBirth || c.get('code') === countryOfBirth);
+        const occupation = occupations.find(o => o.get('name') === previousOccupation || o.get('code') === previousOccupation);
+        const education = edu.find(e => e.get('name') === academicQualification || e.get('code') === academicQualification);
+        const category = data.get('schemeCategory') || '';
+
+        const totalRange = data.get('totalRange');
+        const acquaintancePercentage = data.get('percentageAcquaintance');
+        const warmPercentage = data.get('percentageWarm');
+
+        const filesToUpload = DOC_TYPES.filter(doc => doc.toShow.includes(category.toUpperCase()));
+
+        data.forEach((value, key) => {
+            formData[key] = value;
+        });
+
+        Object.assign(formData, {
+            salesLeadsPotential: {
+                totalRange,
+                percentage: {
+                    warm: warmPercentage,
+                    acquaintance: acquaintancePercentage,
+                },
+                types: salesLeads.map((sl) => {
+                    const description = sl.category === 'warm' ? data.get('warmDescription') : data.get('acquaintanceDescription');
+                    const name = sl.name || sl.get('name');
+                    if (name === 'Others') {
+                        Object.assign(sl, {
+                            description,
+                        });
+                    }
+                    return sl;
+                }),
+            },
+        });
+
+        if (country) {
+            Object.assign(formData, {
+                countryOfBirthCode: country.get('code'),
+            });
+        }
+
+        if (occupation) {
+            Object.assign(formData, {
+                previousOccupationCode: occupation.get('code'),
+                previousOccupationDescription: occupation.get('code') === '059' ? previousOccupationDescription : '',
+            });
+        }
+
+        if (education) {
+            Object.assign(formData, {
+                academicQualificationCode: education.get('code'),
+            });
+        }
+
+        if (dob) {
+            Object.assign(formData, { dob });
+        }
+
+        const sDocs = uploadedFiles.filter((uploaded) => {
+            const type = uploaded.get('type');
+            return filesToUpload.findIndex(ftU => ftU.type === type) !== -1;
+        });
+
+        Object.assign(formData, {
+            supportingDocs: sDocs,
+        });
+
+        Object.assign(formData, {
+            isAuthorizeFSC,
+        });
+
+        return formData;
+    };
+
+    const onSubmit = (data, flag) => {
+        const formData = mapDataToSubmit(data);
+        if (flag === EPS.SUBMIT) {
+            const errors = validate(formData, flag);
+            if (Object.keys(errors).length) {
+                setFormErrors(errors);
+                setAllowanceIdError(!!errors.allowanceId);
+                setTotalRangeError(!!errors.totalRange);
+                setCatWarmError(!!errors.catWarm);
+                setCatAcquantianceError(!!errors.catAcquaintance);
+            } else {
+                sendForm(formData, flag);
+            }
+        } else if (flag === EPS.DRAFT) {
+            sendForm(formData, flag);
+        }
+        console.log(`Form Submitted: ${JSON.stringify(formData)}`);
+        setSendMethod(flag);
+    };
+
+    return formInitialValues !== null && (
+        <>
+            <Seo title="Eps Application" />
+            <Template
+                allowances={allowances}
+                allowanceIdError={allowanceIdError}
+                catWarmError={catWarmError}
+                catAcquantianceError={catAcquantianceError}
+                countries={countryList}
+                edu={educationList}
+                eps={eps}
+                epsForm={epsForm}
+                isEdit={isEdit}
+                formInitialValues={formInitialValues}
+                formTitle={formTitle}
+                keycloak={keycloak}
+                jwt={jwt}
+                initialScheme={previousScheme}
+                occupations={occupationList}
+                supportingDocs={uploadedFiles}
+                totalRangeError={totalRangeError}
+                onSubmit={onSubmit}
+                onFileUploadSuccess={onFileUploadSuccess}
+                isUploadValid={isUploadValid}
+                onFileRemoved={onFileRemoved}
+                onSelectAllowance={onSelectAllowance}
+                onSelectLeads={onSelectLeads}
+                onSelectRange={onSelectRange}
+                onSearchCountry={onSearchCountry}
+                onLeadPercentageChange={onLeadPercentageChange}
+                onSalesLeadsPercentChange={onSalesLeadsPercentChange}
+                {...props}
+            />
+        </>
+    );
+};
+
+const mapStateToProps = createStructuredSelector({
+    allowances: makeSelectAllowances(),
+    countries: makeSelectCountries(),
+    edu: makeSelectEducation(),
+    eps: makeSelectEPSData(),
+    epsForm: getFormValues('eps-form'),
+    jwt: makeSelectJwt(),
+    occupations: makeSelectOccupation(),
+    request: makeSelectRequest(),
+    userData: makeSelectUserData(),
+});
+
+export const mapDispatchToProps = dispatch => ({
+    getEPSDataAction: () => dispatch(getEPSData()),
+    sendEPSDataAction: (data, flag) => dispatch(sendEPSData(data, flag)),
+    setStopSubmitAction: errors => dispatch(stopSubmit('eps-form', errors)),
+    clearSubmitErrorsAction: () => dispatch(clearSubmitErrors('eps-form')),
+    changeFormValueAction: (field, value) => dispatch(change('eps-form', field, value)),
+});
+
+Eps.propTypes = {
+    allowances: PropTypes.instanceOf(List),
+    countries: PropTypes.instanceOf(List),
+    edu: PropTypes.instanceOf(List),
+    eps: PropTypes.instanceOf(Map),
+    epsForm: PropTypes.instanceOf(Map),
+    jwt: PropTypes.string.isRequired,
+    keycloak: PropTypes.objectOf(PropTypes.any).isRequired,
+    location: PropTypes.objectOf(PropTypes.any).isRequired,
+    occupations: PropTypes.instanceOf(List),
+    request: PropTypes.instanceOf(Map).isRequired,
+    userData: PropTypes.instanceOf(Map),
+    changeFormValueAction: PropTypes.func.isRequired,
+    clearSubmitErrorsAction: PropTypes.func.isRequired,
+    getEPSDataAction: PropTypes.func.isRequired,
+    sendEPSDataAction: PropTypes.func.isRequired,
+    setStopSubmitAction: PropTypes.func.isRequired,
+};
+
+Eps.defaultProps = {
+    allowances: List(),
+    countries: List(),
+    edu: List(),
+    eps: Map(),
+    epsForm: Map(),
+    occupations: List(),
+    userData: Map(),
+};
+
+export default connect(mapStateToProps, mapDispatchToProps)(Eps);
